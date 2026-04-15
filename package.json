@@ -1,0 +1,23 @@
+{
+  "name": "ustozaibot",
+  "version": "1.0.0",
+  "description": "Ustoz AI Telegram bot MVP",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --env-file=.env src/index.js",
+    "db:migrate": "node --env-file=.env src/scripts/migrate.js",
+    "check": "node --check src/index.js && node --check src/bot.js && node --check src/config.js && node --check src/db.js && node --check src/services/telegram-api.js && node --check src/services/openai-service.js && node --check src/repositories/users.js && node --check src/repositories/topics.js && node --check src/repositories/materials.js && node --check src/repositories/state.js && node --check src/repositories/quiz.js && node --check src/repositories/dictionaries.js && node --check src/utils/text.js && node --check src/utils/dictionary.js && node --check src/utils/chunking.js && node --check src/utils/time.js && node --check src/scripts/migrate.js"
+  },
+  "keywords": [
+    "telegram-bot",
+    "postgres",
+    "education"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pg": "^8.20.0"
+  }
+}
