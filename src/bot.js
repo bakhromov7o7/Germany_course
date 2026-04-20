@@ -1,12 +1,14 @@
 const { config } = require("./config");
 const {
   createManagedUser,
+  ensureStudent,
   ensureSuperadmin,
   findAnySuperadmin,
   findById,
   findByTelegramUserId,
   listAccessibleStudentsForEmployee,
   listManagedUsersByRole,
+  listStaffMembers,
   touchKnownUser,
 } = require("./repositories/users");
 const {
@@ -76,10 +78,19 @@ const { formatDurationUz, sleep } = require("./utils/time");
 const SUPERADMIN_MENU = {
   keyboard: [
     [{ text: "Employee qo'shish" }],
+    [{ text: "Lug'atlar" }, { text: "Mavzu yaratish" }],
+    [{ text: "Mavzularim" }, { text: "Aktiv mavzu" }],
+    [{ text: "Student qo'shish" }, { text: "Studentga biriktirish" }],
+    [{ text: "Natijalar" }, { text: "Kuchsiz studentlar" }],
+    [{ text: "Bekor qilish" }],
     [{ text: "Yordam" }],
   ],
   resize_keyboard: true,
 };
+
+function isStaff(role) {
+  return role === "employee" || role === "superadmin";
+}
 
 const EMPLOYEE_MENU = {
   keyboard: [
@@ -119,7 +130,7 @@ function getRoleMenu(role) {
 
 function roleHelp(role) {
   if (role === "superadmin") {
-    return "Superadmin panel. Pastdagi tugmadan tanlang.";
+    return "Superadmin panel. Sizda employeelarning barcha imkoniyatlari mavjud, qo'shimcha tarzda employee qo'sha olasiz.";
   }
 
   if (role === "employee") {
@@ -671,12 +682,33 @@ class UstozBot {
       }),
     );
 
-    const actor = await this.resolveActor(message.from);
+    let actor = await this.resolveActor(message.from);
+    const isStartCommand = message.text && splitCommand(message.text)?.command === "/start";
+
+    if (!actor && isStartCommand) {
+      actor = await ensureStudent({
+        telegramUserId: message.from.id,
+        fullName: buildTelegramDisplayName(message.from),
+        username: message.from.username || null,
+      });
+
+      const staffMembers = await listStaffMembers();
+      for (const staff of staffMembers) {
+        try {
+          await sendMessage(
+            staff.telegram_user_id,
+            `Yangi student ro'yxatdan o'tdi: ${actor.full_name} (@${actor.username || "yo'q"})`
+          );
+        } catch (err) {
+          console.error("Yangi student haqida xabar yuborishda xatolik:", err);
+        }
+      }
+    }
 
     if (!actor) {
       await sendMessage(
         message.chat.id,
-        "Siz hali botda ro'yxatdan o'tmagansiz. Employee yoki superadmin avval sizni qo'shsin.",
+        "Siz botdan foydalanish uchun /start tugmasini bosing.",
       );
       return;
     }
@@ -784,7 +816,7 @@ class UstozBot {
         return;
 
       case "/dictionaries":
-        if (actor.role === "employee") {
+        if (isStaff(actor.role)) {
           await this.showEmployeeDictionaries({ actor, chatId });
           return;
         }
@@ -1004,7 +1036,7 @@ class UstozBot {
     }
 
     if (action === "dictionary_create") {
-      if (actor.role !== "employee") {
+      if (!isStaff(actor.role)) {
         await answerCallbackQuery(callbackQuery.id, "Sizga ruxsat yo'q.");
         return;
       }
@@ -1041,7 +1073,7 @@ class UstozBot {
     }
 
     if (action === "dictionary_add" && topicId) {
-      if (actor.role !== "employee") {
+      if (!isStaff(actor.role)) {
         await answerCallbackQuery(callbackQuery.id, "Sizga ruxsat yo'q.");
         return;
       }
@@ -1072,7 +1104,7 @@ class UstozBot {
     }
 
     if (action === "dictionary_replace" && topicId) {
-      if (actor.role !== "employee") {
+      if (!isStaff(actor.role)) {
         await answerCallbackQuery(callbackQuery.id, "Sizga ruxsat yo'q.");
         return;
       }
@@ -1103,7 +1135,7 @@ class UstozBot {
     }
 
     if (action === "dictionary_delete" && topicId) {
-      if (actor.role !== "employee") {
+      if (!isStaff(actor.role)) {
         await answerCallbackQuery(callbackQuery.id, "Sizga ruxsat yo'q.");
         return;
       }
@@ -1127,7 +1159,7 @@ class UstozBot {
     }
 
     if (action === "dictionary_delete_confirm" && topicId) {
-      if (actor.role !== "employee") {
+      if (!isStaff(actor.role)) {
         await answerCallbackQuery(callbackQuery.id, "Sizga ruxsat yo'q.");
         return;
       }
@@ -1256,11 +1288,11 @@ class UstozBot {
       return;
     }
 
-    await this.sendRoleMenu({ actor, chatId });
+    await this.handleEmployeeTextMessage({ actor, chatId, message });
   }
 
   async handleAddStudent({ actor, chatId, argsText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu buyruq faqat employee uchun.");
       return;
     }
@@ -1298,7 +1330,7 @@ class UstozBot {
   }
 
   async handleNewTopic({ actor, chatId, argsText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu buyruq faqat employee uchun.");
       return;
     }
@@ -1338,7 +1370,7 @@ class UstozBot {
   }
 
   async handleListEmployeeTopics({ actor, chatId }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu buyruq faqat employee uchun.");
       return;
     }
@@ -1351,7 +1383,7 @@ class UstozBot {
   }
 
   async handleUseTopic({ actor, chatId, argsText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu buyruq faqat employee uchun.");
       return;
     }
@@ -1387,7 +1419,7 @@ class UstozBot {
   }
 
   async handleAssignTopic({ actor, chatId, argsText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu buyruq faqat employee uchun.");
       return;
     }
@@ -1450,7 +1482,7 @@ class UstozBot {
   }
 
   async handlePrepareVideoUpload({ actor, chatId, argsText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu buyruq faqat employee uchun.");
       return;
     }
@@ -1484,7 +1516,7 @@ class UstozBot {
   }
 
   async handlePrepareTextUpload({ actor, chatId, argsText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu buyruq faqat employee uchun.");
       return;
     }
@@ -1609,7 +1641,7 @@ class UstozBot {
   }
 
   async handleVideoMessage({ actor, chatId, message }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Video qabul qilindi, lekin hozircha video yuklash faqat employee uchun ochiq.");
       return;
     }
@@ -1733,7 +1765,7 @@ class UstozBot {
       return;
     }
 
-    if (actor.role === "employee") {
+    if (isStaff(actor.role)) {
       await this.handleEmployeeTextMessage({ actor, chatId, message });
       return;
     }
@@ -1890,7 +1922,7 @@ class UstozBot {
   }
 
   async showEmployeeResults({ actor, chatId }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu bo'lim faqat employee uchun.");
       return;
     }
@@ -1906,7 +1938,7 @@ class UstozBot {
   }
 
   async showWeakStudents({ actor, chatId }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu bo'lim faqat employee uchun.");
       return;
     }
@@ -1985,7 +2017,7 @@ class UstozBot {
   }
 
   async showEmployeeDictionaries({ actor, chatId, extraText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu bo'lim faqat employee uchun.");
       return;
     }
@@ -2012,7 +2044,7 @@ class UstozBot {
   }
 
   async openEmployeeDictionary({ actor, chatId, dictionaryId, extraText }) {
-    if (actor.role !== "employee") {
+    if (!isStaff(actor.role)) {
       await sendMessage(chatId, "Bu bo'lim faqat employee uchun.");
       return;
     }

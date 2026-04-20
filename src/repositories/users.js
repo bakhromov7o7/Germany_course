@@ -135,13 +135,47 @@ async function listAccessibleStudentsForEmployee(employeeUserId) {
   return result.rows;
 }
 
+async function ensureStudent({ telegramUserId, fullName, username }) {
+  const result = await query(
+    `
+      insert into users (
+        telegram_user_id,
+        full_name,
+        username,
+        role,
+        is_active
+      )
+      values ($1, $2, $3, 'student', true)
+      on conflict (telegram_user_id)
+      do update set
+        full_name = excluded.full_name,
+        username = excluded.username,
+        is_active = true,
+        updated_at = now()
+      returning *
+    `,
+    [telegramUserId, fullName, username || null],
+  );
+
+  return result.rows[0];
+}
+
+async function listStaffMembers() {
+  const result = await query(
+    "select * from users where role in ('employee', 'superadmin') and is_active = true"
+  );
+  return result.rows;
+}
+
 module.exports = {
   createManagedUser,
+  ensureStudent,
   ensureSuperadmin,
   findAnySuperadmin,
   findById,
   findByTelegramUserId,
   listAccessibleStudentsForEmployee,
   listManagedUsersByRole,
+  listStaffMembers,
   touchKnownUser,
 };
