@@ -201,25 +201,10 @@ async function deleteDictionary(dictionaryId) {
 async function listDictionariesForStudent(studentUserId) {
   const result = await query(
     `
-      with accessible_employees as (
-        select distinct users.created_by_user_id as employee_user_id
-        from users
-        where users.id = $1
-          and users.role = 'student'
-          and users.created_by_user_id is not null
-
-        union
-
-        select distinct topics.employee_user_id
-        from student_topic_access
-        join topics on topics.id = student_topic_access.topic_id
-        where student_topic_access.student_user_id = $1
-      )
       select
         dictionaries.*,
         coalesce(entry_stats.entry_count, 0) as entry_count
       from dictionaries
-      join accessible_employees on accessible_employees.employee_user_id = dictionaries.employee_user_id
       left join (
         select dictionary_id, count(*) as entry_count
         from dictionary_entries
@@ -227,7 +212,7 @@ async function listDictionariesForStudent(studentUserId) {
       ) as entry_stats on entry_stats.dictionary_id = dictionaries.id
       order by dictionaries.updated_at desc, dictionaries.id desc
     `,
-    [studentUserId],
+    [],
   );
 
   return result.rows.map(mapDictionaryRow);
@@ -236,25 +221,10 @@ async function listDictionariesForStudent(studentUserId) {
 async function getDictionaryByIdForStudent(dictionaryId, studentUserId) {
   const result = await query(
     `
-      with accessible_employees as (
-        select distinct users.created_by_user_id as employee_user_id
-        from users
-        where users.id = $2
-          and users.role = 'student'
-          and users.created_by_user_id is not null
-
-        union
-
-        select distinct topics.employee_user_id
-        from student_topic_access
-        join topics on topics.id = student_topic_access.topic_id
-        where student_topic_access.student_user_id = $2
-      )
       select
         dictionaries.*,
         coalesce(entry_stats.entry_count, 0) as entry_count
       from dictionaries
-      join accessible_employees on accessible_employees.employee_user_id = dictionaries.employee_user_id
       left join (
         select dictionary_id, count(*) as entry_count
         from dictionary_entries
@@ -263,7 +233,7 @@ async function getDictionaryByIdForStudent(dictionaryId, studentUserId) {
       where dictionaries.id = $1
       limit 1
     `,
-    [dictionaryId, studentUserId],
+    [dictionaryId],
   );
 
   return mapDictionaryRow(result.rows[0] || null);
