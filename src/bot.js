@@ -808,6 +808,25 @@ class UstozBot {
         await this.showWeakStudents({ actor, chatId });
         return;
 
+      case "/checkai":
+        if (actor.role !== "superadmin") {
+          await sendMessage(chatId, "Bu buyruq faqat superadmin uchun.");
+          return;
+        }
+
+        try {
+          const result = await gradeQuizAnswer({
+            topicTitle: "Test",
+            question: "Checking AI",
+            expectedAnswer: "Success",
+            studentAnswer: "Success",
+          });
+          await sendMessage(chatId, `AI holati: OK ✅\nFeedback: ${result.feedback}`);
+        } catch (error) {
+          await sendMessage(chatId, `AI holati: XATO ❌\nSabab: ${error.message}`);
+        }
+        return;
+
       case "/uploadvideo":
         await this.handlePrepareVideoUpload({ actor, chatId, argsText: command.argsText });
         return;
@@ -2199,9 +2218,31 @@ class UstozBot {
   }
 
   async handleEmployeeDictionaryImport({ actor, chatId, mode, title = null, dictionaryId = null, text }) {
-    const parsed = parseDictionaryText(text);
+    let parsed = parseDictionaryText(text);
+    let usedAi = false;
 
-    if (!parsed.entries.length || parsed.invalidLines.length) {
+    const skipThreshold = 0.2;
+    const lines = String(text || "").split(/\r?\n/).filter((l) => l.trim()).length;
+    const skippedCount = parsed.ignoredLines.length + parsed.invalidLines.length;
+
+    if (hasOpenAi() && (parsed.entries.length < 2 || skippedCount / lines > skipThreshold)) {
+      try {
+        const aiEntries = await parseDictionaryTextWithAi(text);
+        if (aiEntries.length > parsed.entries.length) {
+          parsed = {
+            entries: aiEntries,
+            ignoredLines: [],
+            invalidLines: [],
+            totalLines: lines,
+          };
+          usedAi = true;
+        }
+      } catch (error) {
+        console.error("AI dictionary parsing failed:", error);
+      }
+    }
+
+    if (!parsed.entries.length) {
       await sendMessage(chatId, this.buildDictionaryImportError(parsed.invalidLines), {
         reply_markup: getRoleMenu(actor.role),
       });
@@ -2247,7 +2288,9 @@ class UstozBot {
         mode === "append"
           ? await addDictionaryEntries({ dictionaryId: dictionary.id, entries: parsed.entries })
           : await replaceDictionaryEntries({ dictionaryId: dictionary.id, entries: parsed.entries });
+
       const ignoredNote = parsed.ignoredLines.length ? ` ${parsed.ignoredLines.length} ta sarlavha yoki izoh qatori o'tkazib yuborildi.` : "";
+      const aiNote = usedAi ? " (Format AI yordamida aniqlandi ✨)" : "";
 
       await clearPendingAction(actor.id);
       await this.openEmployeeDictionary({
@@ -2256,8 +2299,8 @@ class UstozBot {
         dictionaryId: updatedDictionary.id,
         extraText:
           mode === "append"
-            ? `${Number(updatedDictionary.inserted_count || 0)} ta yangi juftlik qo'shildi.${ignoredNote}`
-            : `Bo'lim to'liq yangilandi. ${Number(updatedDictionary.inserted_count || 0)} ta juftlik saqlandi.${ignoredNote}`,
+            ? `${Number(updatedDictionary.inserted_count || 0)} ta yangi juftlik qo'shildi.${ignoredNote}${aiNote}`
+            : `Bo'lim to'liq yangilandi. ${Number(updatedDictionary.inserted_count || 0)} ta juftlik saqlandi.${ignoredNote}${aiNote}`,
       });
       if (mode !== "append" || Number(updatedDictionary.inserted_count || 0) > 0) {
         await this.notifyStudentsAboutDictionaryUpdate({

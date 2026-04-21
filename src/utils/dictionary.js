@@ -8,7 +8,7 @@ const TRAILING_HEADING_PATTERN = /[:\-–—]\s*$/u;
 const BRACKET_PAIR_PATTERN = /^(?<left>.+?)\s*[\(\[](?<right>[^()[\]]+)[\)\]]\s*$/u;
 const TAB_SEPARATOR_PATTERN = /^(?<left>.+?)\t+(?<right>.+)$/u;
 const STRONG_SEPARATOR_PATTERN = /^(?<left>.+?)\s*(?:\||;|=>|->|:|=)\s*(?<right>.+)$/u;
-const DASH_SEPARATOR_PATTERN = /^(?<left>.+?)\s+[—–-]\s+(?<right>.+)$/u;
+const DASH_SEPARATOR_PATTERN = /^(?<left>.+?)\s*[—–-]\s*(?<right>.+)$/u;
 const GERMAN_ARTICLE_PATTERN = /^(?:der|die|das|ein|eine)\s+/i;
 
 function normalizeDictionaryTerm(value) {
@@ -72,8 +72,21 @@ function isIgnorableLine(line) {
     return true;
   }
 
-  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
-  return wordCount <= 4;
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+
+  if (wordCount > 5) {
+    return false;
+  }
+
+  const commonSeparators = ["|", ";", "=>", "->", ":", "=", "—", "–", "-"];
+  const hasSeparator = commonSeparators.some((sep) => normalized.includes(sep));
+
+  if (hasSeparator && wordCount >= 1) {
+    return false;
+  }
+
+  return wordCount <= 3;
 }
 
 function parseDictionaryText(text) {

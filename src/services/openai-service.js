@@ -341,6 +341,37 @@ async function generateQuizRecovery({ topic, chunks, question, expectedAnswer, l
   });
 }
 
+async function parseDictionaryTextWithAi(text) {
+  if (!hasOpenAi()) {
+    throw new Error("AI parsing requires an API key");
+  }
+
+  const responseText = await requestText({
+    systemPrompt: [
+      "Sen lug'at matnidan nemischa-o'zbekcha so'z juftliklarini ajratib beruvchi yordamchisan.",
+      "Faqat JSON qaytar.",
+      "Format: [{\"german\": \"...\", \"uzbek\": \"...\"}].",
+      "Sarlavha, izoh yoki keraksiz gaplarni tashlab yubor.",
+      "Agar qatorda juftlik bo'lmasa, uni qo'shma.",
+      "Juftliklarni iloji boricha aniq ajrat.",
+    ].join(" "),
+    userPrompt: `Quyidagi matndan lug'at juftliklarini ajrat:\n\n${text}`,
+  });
+
+  try {
+    const parsed = JSON.parse(extractJsonCandidate(responseText));
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item?.german && item?.uzbek).map((item) => ({
+          german: String(item.german).trim(),
+          uzbek: String(item.uzbek).trim(),
+        }))
+      : [];
+  } catch (error) {
+    console.error("Failed to parse AI dictionary response:", error);
+    return [];
+  }
+}
+
 async function transcribeMedia({ fileBuffer, filename = "lesson.mp4", mimeType = "video/mp4", prompt = "" }) {
   if (!hasOpenAi()) {
     throw new Error("Transcription requires an AI API key");
@@ -387,5 +418,6 @@ module.exports = {
   getLanguageMeta,
   gradeQuizAnswer,
   hasOpenAi,
+  parseDictionaryTextWithAi,
   transcribeMedia,
 };
