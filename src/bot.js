@@ -31,6 +31,7 @@ const {
   getDictionaryEntryById,
   getDictionarySession,
   getRandomDictionaryEntry,
+  listAllDictionaries,
   listDictionariesByEmployee,
   listDictionariesForStudent,
   listDictionaryEntries,
@@ -2022,7 +2023,9 @@ class UstozBot {
       return;
     }
 
-    const dictionaries = await listDictionariesByEmployee(actor.id);
+    const dictionaries = actor.role === "superadmin"
+      ? await listAllDictionaries()
+      : await listDictionariesByEmployee(actor.id);
     const parts = [];
 
     if (extraText) {

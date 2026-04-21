@@ -218,6 +218,10 @@ async function listDictionariesForStudent(studentUserId) {
   return result.rows.map(mapDictionaryRow);
 }
 
+async function listAllDictionaries() {
+  return listDictionariesForStudent(null);
+}
+
 async function getDictionaryByIdForStudent(dictionaryId, studentUserId) {
   const result = await query(
     `
@@ -415,6 +419,7 @@ module.exports = {
   getDictionaryEntryById,
   getDictionarySession,
   getRandomDictionaryEntry,
+  listAllDictionaries,
   listDictionariesByEmployee,
   listDictionariesForStudent,
   listDictionaryEntries,
