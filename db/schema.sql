@@ -145,11 +145,15 @@ create table if not exists user_states (
   pending_payload jsonb not null default '{}'::jsonb,
   active_topic_id bigint references topics(id),
   preferred_language varchar(10) not null default 'uz',
+  german_chat_history jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
 alter table if exists user_states
   add column if not exists preferred_language varchar(10) not null default 'uz';
+
+alter table if exists user_states
+  add column if not exists german_chat_history jsonb not null default '[]'::jsonb;
 
 create table if not exists topic_materials (
   id bigserial primary key,

@@ -39,7 +39,7 @@ const {
   upsertDictionarySession,
 } = require("./repositories/dictionaries");
 const { getKnowledgeChunks, getTopicVideos, saveTextMaterial, saveVideoMaterial } = require("./repositories/materials");
-const { clearPendingAction, getStudentSession, getUserState, setActiveTopic, setPendingAction, setPreferredLanguage, upsertStudentSession } = require("./repositories/state");
+const { clearPendingAction, getStudentSession, getUserState, setActiveTopic, setPendingAction, setGermanChatHistory, setPreferredLanguage, upsertStudentSession } = require("./repositories/state");
 const {
   createQuizAttempt,
   finalizeAttempt,
@@ -633,6 +633,18 @@ class UstozBot {
   async start() {
     console.log("Ustoz AI bot started.");
     console.log(`OpenAI configured: ${hasOpenAi() ? "yes" : "no"}`);
+
+    try {
+      // Clear old updates to avoid spamming on restart
+      const initialUpdates = await getUpdates();
+      if (initialUpdates && initialUpdates.length > 0) {
+        this.offset = initialUpdates[initialUpdates.length - 1].update_id + 1;
+        await getUpdates(this.offset);
+        console.log(`Cleared ${initialUpdates.length} old updates on startup.`);
+      }
+    } catch (error) {
+      console.error("Failed to clear old updates:", error);
+    }
 
     while (true) {
       try {
@@ -1777,10 +1789,17 @@ class UstozBot {
   async handleTextMessage({ actor, chatId, message }) {
     const normalizedText = normalizeText(message.text);
     const state = await getUserState(actor.id);
+    let pendingAction = state?.pending_action;
 
-    if (normalizedText === "bekor qilish" || normalizedText === "yordam" || normalizedText === "lug'atlar" || normalizedText === "lugatlar") {
-      if (state?.pending_action === "german_chat") {
+    const menuButtons = [
+      "bekor qilish", "yordam", "lug'atlar", "lugatlar", 
+      "employee qo'shish", "natijalar", "kuchsiz studentlar", "xatolarim"
+    ];
+
+    if (menuButtons.includes(normalizedText)) {
+      if (pendingAction === "german_chat") {
         await clearPendingAction(actor.id);
+        pendingAction = null;
       }
     }
 
@@ -1789,7 +1808,6 @@ class UstozBot {
       await setPendingAction({
         userId: actor.id,
         pendingAction: "german_chat",
-        pendingPayload: { history: [] },
       });
       await sendMessage(chatId, "Hallo! Lass uns auf Deutsch sprechen. Wie geht es dir heute?", {
         reply_markup: getRoleMenu(actor.role),
@@ -1797,7 +1815,7 @@ class UstozBot {
       return;
     }
 
-    if (state?.pending_action === "german_chat") {
+    if (pendingAction === "german_chat") {
       await this.handleGermanChat({ actor, chatId, message, state });
       return;
     }
@@ -1822,7 +1840,7 @@ class UstozBot {
 
   async handleGermanChat({ actor, chatId, message, state }) {
     await sendChatAction(chatId, "typing");
-    const history = Array.isArray(state.pending_payload?.history) ? state.pending_payload.history : [];
+    const history = Array.isArray(state.german_chat_history) ? state.german_chat_history : [];
     
     const aiResponse = await generateGermanChatResponse(message.text, history);
     
@@ -1834,11 +1852,7 @@ class UstozBot {
       history.splice(0, history.length - 10);
     }
 
-    await setPendingAction({
-      userId: actor.id,
-      pendingAction: "german_chat",
-      pendingPayload: { history },
-    });
+    await setGermanChatHistory(actor.id, history);
 
     await sendMessage(chatId, aiResponse);
   }

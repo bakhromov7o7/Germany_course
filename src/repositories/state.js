@@ -133,13 +133,30 @@ async function upsertStudentSession({
 
   return result.rows[0];
 }
+async function setGermanChatHistory(userId, history) {
+  const result = await query(
+    `
+      insert into user_states (user_id, german_chat_history)
+      values ($1, $2::jsonb)
+      on conflict (user_id)
+      do update set
+        german_chat_history = excluded.german_chat_history,
+        updated_at = now()
+      returning *
+    `,
+    [userId, JSON.stringify(history)],
+  );
+
+  return result.rows[0];
+}
 
 module.exports = {
   clearPendingAction,
-  getStudentSession,
   getUserState,
   setActiveTopic,
-  setPreferredLanguage,
   setPendingAction,
+  setPreferredLanguage,
+  setGermanChatHistory,
+  getStudentSession,
   upsertStudentSession,
 };
