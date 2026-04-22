@@ -59,6 +59,8 @@ const {
   generateQuizRecovery,
   getLanguageMeta,
   gradeQuizAnswer,
+  gradeDictionaryAnswerWithAi,
+  generateGermanChatResponse,
   hasOpenAi,
   transcribeMedia,
 } = require("./services/openai-service");
@@ -79,9 +81,7 @@ const { formatDurationUz, sleep } = require("./utils/time");
 const SUPERADMIN_MENU = {
   keyboard: [
     [{ text: "Employee qo'shish" }],
-    [{ text: "Lug'atlar" }, { text: "Mavzu yaratish" }],
-    [{ text: "Mavzularim" }, { text: "Aktiv mavzu" }],
-    [{ text: "Student qo'shish" }, { text: "Studentga biriktirish" }],
+    [{ text: "Lug'atlar" }, { text: "Nemis tilida suhbat" }],
     [{ text: "Natijalar" }, { text: "Kuchsiz studentlar" }],
     [{ text: "Bekor qilish" }],
     [{ text: "Yordam" }],
@@ -95,9 +95,7 @@ function isStaff(role) {
 
 const EMPLOYEE_MENU = {
   keyboard: [
-    [{ text: "Lug'atlar" }, { text: "Mavzu yaratish" }],
-    [{ text: "Mavzularim" }, { text: "Aktiv mavzu" }],
-    [{ text: "Student qo'shish" }, { text: "Studentga biriktirish" }],
+    [{ text: "Lug'atlar" }, { text: "Nemis tilida suhbat" }],
     [{ text: "Natijalar" }, { text: "Kuchsiz studentlar" }],
     [{ text: "Bekor qilish" }],
     [{ text: "Yordam" }],
@@ -107,10 +105,7 @@ const EMPLOYEE_MENU = {
 
 const STUDENT_MENU = {
   keyboard: [
-    [{ text: "Lug'atlar" }, { text: "Mavzularim" }],
-    [{ text: "Aktiv mavzu" }, { text: "Til tanlash" }],
-    [{ text: "Qisqacha tushuntir" }, { text: "Soddaroq tushuntir" }],
-    [{ text: "Misol bilan" }, { text: "Test boshlash" }],
+    [{ text: "Lug'atlar" }, { text: "Nemis tilida suhbat" }],
     [{ text: "Xatolarim" }],
     [{ text: "Yordam" }],
   ],
@@ -1780,6 +1775,33 @@ class UstozBot {
   }
 
   async handleTextMessage({ actor, chatId, message }) {
+    const normalizedText = normalizeText(message.text);
+    const state = await getUserState(actor.id);
+
+    if (normalizedText === "bekor qilish" || normalizedText === "yordam" || normalizedText === "lug'atlar" || normalizedText === "lugatlar") {
+      if (state?.pending_action === "german_chat") {
+        await clearPendingAction(actor.id);
+      }
+    }
+
+    if (normalizedText === "nemis tilida suhbat") {
+      await clearDictionarySession(actor.id);
+      await setPendingAction({
+        userId: actor.id,
+        pendingAction: "german_chat",
+        pendingPayload: { history: [] },
+      });
+      await sendMessage(chatId, "Hallo! Lass uns auf Deutsch sprechen. Wie geht es dir heute?", {
+        reply_markup: getRoleMenu(actor.role),
+      });
+      return;
+    }
+
+    if (state?.pending_action === "german_chat") {
+      await this.handleGermanChat({ actor, chatId, message, state });
+      return;
+    }
+
     if (actor.role === "superadmin") {
       await this.handleSuperadminTextMessage({ actor, chatId, message });
       return;
@@ -1796,6 +1818,29 @@ class UstozBot {
     }
 
     await sendMessage(chatId, roleHelp(actor.role));
+  }
+
+  async handleGermanChat({ actor, chatId, message, state }) {
+    await sendChatAction(chatId, "typing");
+    const history = Array.isArray(state.pending_payload?.history) ? state.pending_payload.history : [];
+    
+    const aiResponse = await generateGermanChatResponse(message.text, history);
+    
+    history.push({ role: "user", content: message.text });
+    history.push({ role: "assistant", content: aiResponse });
+    
+    // Keep only last 10 messages (5 turns)
+    if (history.length > 10) {
+      history.splice(0, history.length - 10);
+    }
+
+    await setPendingAction({
+      userId: actor.id,
+      pendingAction: "german_chat",
+      pendingPayload: { history },
+    });
+
+    await sendMessage(chatId, aiResponse);
   }
 
   async showEmployeeActiveTopic({ actor, chatId }) {
@@ -2485,7 +2530,20 @@ class UstozBot {
     const correctAnswers = Number(dictionarySession.correct_answers || 0);
     const mistakes = Array.isArray(dictionarySession.mistakes) ? dictionarySession.mistakes : [];
 
-    if (matchDictionaryAnswer(expectedAnswer, studentAnswer)) {
+    let isCorrect = matchDictionaryAnswer(expectedAnswer, studentAnswer);
+
+    if (!isCorrect && hasOpenAi()) {
+      const originalWord = dictionarySession.current_direction === "de_to_uz" ? entry.german_text : entry.uzbek_text;
+      const aiResult = await gradeDictionaryAnswerWithAi({
+        originalWord,
+        expectedAnswer,
+        studentAnswer,
+        languageCode,
+      });
+      isCorrect = aiResult.correct;
+    }
+
+    if (isCorrect) {
       if (!remainingEntryIds.length) {
         await this.finishDictionaryPractice({
           actor,
@@ -2859,16 +2917,6 @@ class UstozBot {
       return;
     }
 
-    if (normalizedText === "mavzularim") {
-      await this.handleListEmployeeTopics({ actor, chatId });
-      return;
-    }
-
-    if (normalizedText === "aktiv mavzu") {
-      await this.showEmployeeActiveTopic({ actor, chatId });
-      return;
-    }
-
     if (normalizedText === "natijalar") {
       await this.showEmployeeResults({ actor, chatId });
       return;
@@ -2876,49 +2924,6 @@ class UstozBot {
 
     if (normalizedText === "kuchsiz studentlar") {
       await this.showWeakStudents({ actor, chatId });
-      return;
-    }
-
-    if (normalizedText === "mavzu yaratish") {
-      await setPendingAction({
-        userId: actor.id,
-        pendingAction: "creating_topic_title",
-      });
-      await sendMessage(chatId, "1/2 Mavzu nomini yuboring.", {
-        reply_markup: getRoleMenu(actor.role),
-      });
-      return;
-    }
-
-    if (normalizedText === "student qo'shish") {
-      await setPendingAction({
-        userId: actor.id,
-        pendingAction: "adding_student",
-      });
-      await sendMessage(chatId, "1/1 Student ma'lumotini yuboring:\ntelegram_id | ism", {
-        reply_markup: getRoleMenu(actor.role),
-      });
-      return;
-    }
-
-    if (normalizedText === "studentga biriktirish") {
-      if (!state?.active_topic_id) {
-        await sendMessage(chatId, "Avval aktiv mavzuni tanlang. Mavzularim tugmasini bosing.", {
-          reply_markup: getRoleMenu(actor.role),
-        });
-        return;
-      }
-
-      await setPendingAction({
-        userId: actor.id,
-        pendingAction: "assigning_student_to_active_topic",
-        pendingTopicId: state.active_topic_id,
-      });
-      await this.showAssignStudentPicker({
-        actor,
-        chatId,
-        topicId: state.active_topic_id,
-      });
       return;
     }
 
@@ -3149,42 +3154,6 @@ class UstozBot {
 
     if (normalizedText === "lug'atlar" || normalizedText === "lugatlar") {
       await this.showStudentDictionaries({ actor, chatId });
-      return;
-    }
-
-    if (normalizedText === "mavzularim") {
-      await clearDictionarySession(actor.id);
-      await this.handleListStudentTopics({ actor, chatId });
-      return;
-    }
-
-    if (normalizedText === "aktiv mavzu") {
-      await clearDictionarySession(actor.id);
-      await this.showStudentActiveTopic({ actor, chatId });
-      return;
-    }
-
-    if (normalizedText === "til tanlash") {
-      await clearDictionarySession(actor.id);
-      await this.showLanguagePicker({ actor, chatId });
-      return;
-    }
-
-    if (normalizedText === "qisqacha tushuntir") {
-      await clearDictionarySession(actor.id);
-      await this.sendTopicSummary({ actor, chatId, languageCode });
-      return;
-    }
-
-    if (normalizedText === "soddaroq tushuntir") {
-      await clearDictionarySession(actor.id);
-      await this.reexplainLastStudentQuestion({ actor, chatId, languageCode, teachingMode: "simple" });
-      return;
-    }
-
-    if (normalizedText === "misol bilan") {
-      await clearDictionarySession(actor.id);
-      await this.reexplainLastStudentQuestion({ actor, chatId, languageCode, teachingMode: "example" });
       return;
     }
 

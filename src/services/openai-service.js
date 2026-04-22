@@ -300,6 +300,40 @@ async function gradeQuizAnswer({ topicTitle, question, expectedAnswer, studentAn
   };
 }
 
+async function gradeDictionaryAnswerWithAi({ originalWord, expectedAnswer, studentAnswer, languageCode = "uz" }) {
+  if (!hasOpenAi()) {
+    return { correct: false };
+  }
+
+  const responseText = await requestText({
+    systemPrompt: [
+      "Sen til o'rganish botining lug'at tekshiruvchisisan.",
+      "Faqat JSON qaytar.",
+      'Format: {"correct": true, "feedback": "Sotib olmoq ham to\'g\'ri javob"} yoki {"correct": false}',
+      "Vazifang: Studentning javobi kutilgan javob bilan bir xil ma'noni bildiradimi (sinonimmi) yoki yo'qmi, shuni aniqlash.",
+      "Masalan: Kutilgan javob 'xarid qilmoq', Student javobi 'sotib olmoq' bo'lsa, correct: true qaytarish kerak.",
+      "Qisqa va aniq ishlashing kerak.",
+    ].join(" "),
+    userPrompt: [
+      `Asl so'z: ${originalWord}`,
+      `Kutilgan javob: ${expectedAnswer}`,
+      `Student javobi: ${studentAnswer}`,
+    ].join("\n"),
+    reasoningEffort: "low",
+  });
+
+  try {
+    const parsed = JSON.parse(extractJsonCandidate(responseText));
+    return {
+      correct: Boolean(parsed.correct),
+      feedback: parsed.feedback ? String(parsed.feedback).trim() : null,
+    };
+  } catch (error) {
+    console.error("Failed to parse dictionary AI grade:", error);
+    return { correct: false };
+  }
+}
+
 async function generateQuizRecovery({ topic, chunks, question, expectedAnswer, languageCode = "uz" }) {
   const language = getLanguageMeta(languageCode);
   const relevantChunks = selectRelevantChunks(`${question} ${expectedAnswer}`, chunks, config.topicContextChunkLimit);
@@ -372,6 +406,60 @@ async function parseDictionaryTextWithAi(text) {
   }
 }
 
+async function generateGermanChatResponse(message, history = []) {
+  if (!hasOpenAi()) {
+    return "AI xizmati hozircha o'chirilgan.";
+  }
+
+  const historyText = history.length > 0 
+    ? history.map(h => `${h.role === 'user' ? 'Student' : 'Tutor'}: ${h.content}`).join("\n") 
+    : "Suhbat boshi.";
+
+  const systemPrompt = [
+    "Du bist ein echter, charismatischer und emotionaler deutscher Gesprächspartner (Tutor).",
+    "Antworte immer kurz, natürlich und freundlich.",
+    "Du sprichst NUR Deutsch.",
+    "WICHTIG: DU MUSST IMMER EIN GÜLTIGES JSON ZURÜCKGEBEN!",
+    "Format:",
+    " {",
+    "   \"german_response\": \"Dein normaler, freundlicher Antwortsatz auf Deutsch.\",",
+    "   \"correction\": \"Wenn der Student einen Fehler gemacht hat, erkläre ihn hier auf Usbekisch. Sonst null.\"",
+    " }",
+    "Beispiel ohne Fehler:",
+    " { \"german_response\": \"Hallo! Mir geht es super. Und dir?\", \"correction\": null }",
+    "Beispiel mit Fehler:",
+    " { \"german_response\": \"Ich gehe auch gerne zur Schule.\", \"correction\": \"Sizning xatoingiz: 'Ich bin gehen' emas, 'Ich gehe' bo'lishi kerak.\" }",
+    "Gib KEINE anderen Texte außerhalb des JSON zurück. Deine Gedanken werden ignoriert.",
+  ].join("\n");
+
+  const userPrompt = [
+    "Bisheriger Chatverlauf:",
+    historyText,
+    "",
+    `Student sagt jetzt: ${message}`
+  ].join("\n");
+
+  try {
+    const responseText = await requestText({
+      systemPrompt,
+      userPrompt,
+      reasoningEffort: "low",
+    });
+
+    const parsed = JSON.parse(extractJsonCandidate(responseText));
+    let finalOutput = parsed.german_response || "Entschuldigung, ich habe das nicht verstanden.";
+    
+    if (parsed.correction) {
+      finalOutput += `\n---\n${parsed.correction}`;
+    }
+
+    return finalOutput;
+  } catch (error) {
+    console.error("Failed to generate German chat response:", error);
+    return "Kechirasiz, hozircha javob bera olmayman. Keyinroq urinib ko'ring.";
+  }
+}
+
 async function transcribeMedia({ fileBuffer, filename = "lesson.mp4", mimeType = "video/mp4", prompt = "" }) {
   if (!hasOpenAi()) {
     throw new Error("Transcription requires an AI API key");
@@ -417,6 +505,8 @@ module.exports = {
   generateQuizRecovery,
   getLanguageMeta,
   gradeQuizAnswer,
+  gradeDictionaryAnswerWithAi,
+  generateGermanChatResponse,
   hasOpenAi,
   parseDictionaryTextWithAi,
   transcribeMedia,
