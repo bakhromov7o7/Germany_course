@@ -2051,11 +2051,7 @@ class UstozBot {
   }
 
   async sendEmployeeDictionaryResult({ actor, dictionary, dictionarySession, correctAnswers, mistakes }) {
-    const employee = await findById(dictionary.employee_user_id);
-
-    if (!employee?.telegram_user_id) {
-      return;
-    }
+    const staff = await listStaffMembers();
 
     const startedAt = dictionarySession?.active_attempt_started_at
       ? new Date(dictionarySession.active_attempt_started_at)
@@ -2063,19 +2059,22 @@ class UstozBot {
     const durationSeconds = startedAt ? Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1000)) : 0;
     const totalQuestions = Number(dictionarySession?.total_questions || 0);
 
-    await sendMessage(
-      employee.telegram_user_id,
-      formatEmployeeDictionaryResult({
-        studentName: actor.full_name,
-        dictionaryTitle: dictionary.title,
-        correctAnswers,
-        totalQuestions,
-        durationText: formatDurationUz(durationSeconds),
-        mistakes,
-      }),
-    ).catch((error) => {
-      console.error("Employee dictionary result sending failed:", error);
+    const reportText = formatEmployeeDictionaryResult({
+      studentName: actor.full_name,
+      dictionaryTitle: dictionary.title,
+      correctAnswers,
+      totalQuestions,
+      durationText: formatDurationUz(durationSeconds),
+      mistakes,
     });
+
+    for (const member of staff) {
+      if (member.telegram_user_id) {
+        sendMessage(member.telegram_user_id, reportText).catch((error) => {
+          console.error(`Employee dictionary result notification failed for ${member.full_name}:`, error);
+        });
+      }
+    }
   }
 
   async finishDictionaryPractice({ actor, chatId, dictionary, dictionarySession, languageCode, introText, correctAnswers, mistakes }) {
@@ -3500,7 +3499,6 @@ class UstozBot {
       },
     );
 
-    const employeeChatId = summary.attempt.employee_telegram_user_id;
     const mistakes = summary.questions
       .filter((item) => item.is_correct === false)
       .map((item) => `${item.question_order}. ${item.question_text}\nJavob: ${item.student_answer || "-"}`)
@@ -3517,14 +3515,26 @@ class UstozBot {
       .filter(Boolean)
       .join("\n");
 
-    try {
-      await sendMessage(employeeChatId, reportText);
+    const staff = await listStaffMembers();
+    let sentCount = 0;
+
+    for (const member of staff) {
+      if (member.telegram_user_id) {
+        try {
+          await sendMessage(member.telegram_user_id, reportText);
+          sentCount++;
+        } catch (error) {
+          console.error(`Employee quiz report notification failed for ${member.full_name}:`, error);
+        }
+      }
+    }
+
+    if (sentCount > 0) {
       await markReportSent(attemptId);
-    } catch (error) {
-      console.error("Employee report sending failed:", error);
+    } else {
       await sendMessage(
         chatId,
-        "Natija saqlandi, lekin employee ga yuborib bo'lmadi. Employee botni avval start qilgan bo'lishi kerak.",
+        "Natija saqlandi, lekin employee larga yuborib bo'lmadi. Employee lar botni avval start qilgan bo'lishi kerak.",
       );
     }
   }
