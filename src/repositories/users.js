@@ -105,31 +105,15 @@ async function listManagedUsersByRole({ createdByUserId, role }) {
   return result.rows;
 }
 
-async function listAccessibleStudentsForEmployee(employeeUserId) {
+async function listAccessibleStudentsForEmployee(_employeeUserId) {
   const result = await query(
     `
-      with accessible_students as (
-        select users.id, users.full_name, users.telegram_user_id
-        from users
-        where users.created_by_user_id = $1
-          and users.role = 'student'
-          and users.is_active = true
-
-        union
-
-        select students.id, students.full_name, students.telegram_user_id
-        from student_topic_access
-        join topics on topics.id = student_topic_access.topic_id
-        join users as students on students.id = student_topic_access.student_user_id
-        where topics.employee_user_id = $1
-          and students.role = 'student'
-          and students.is_active = true
-      )
-      select *
-      from accessible_students
+      select id, full_name, telegram_user_id
+      from users
+      where role = 'student'
+        and is_active = true
       order by full_name asc, id asc
-    `,
-    [employeeUserId],
+    `
   );
 
   return result.rows;

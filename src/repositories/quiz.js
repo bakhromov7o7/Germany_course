@@ -149,7 +149,7 @@ async function getAttemptSummary(quizAttemptId) {
   };
 }
 
-async function listRecentQuizResultsForEmployee(employeeUserId, limit = 8) {
+async function listRecentQuizResultsForEmployee(_employeeUserId, limit = 8) {
   const result = await query(
     `
       select
@@ -160,41 +160,29 @@ async function listRecentQuizResultsForEmployee(employeeUserId, limit = 8) {
       from quiz_attempts
       join users as students on students.id = quiz_attempts.student_user_id
       join topics on topics.id = quiz_attempts.topic_id
-      where quiz_attempts.employee_user_id = $1
-        and quiz_attempts.finished_at is not null
+      where quiz_attempts.finished_at is not null
       order by quiz_attempts.finished_at desc, quiz_attempts.id desc
-      limit $2
+      limit $1
     `,
-    [employeeUserId, limit],
+    [limit],
   );
 
   return result.rows;
 }
 
-async function listEmployeeStudentStats(employeeUserId) {
+async function listEmployeeStudentStats(_employeeUserId) {
   const result = await query(
     `
-      with managed_students as (
+      with all_students as (
         select users.id, users.full_name, users.telegram_user_id
         from users
-        where users.created_by_user_id = $1
-          and users.role = 'student'
+        where users.role = 'student'
           and users.is_active = true
-
-        union
-
-        select students.id, students.full_name, students.telegram_user_id
-        from student_topic_access
-        join topics on topics.id = student_topic_access.topic_id
-        join users as students on students.id = student_topic_access.student_user_id
-        where topics.employee_user_id = $1
-          and students.role = 'student'
-          and students.is_active = true
       )
       select
-        managed_students.id,
-        managed_students.full_name,
-        managed_students.telegram_user_id,
+        all_students.id,
+        all_students.full_name,
+        all_students.telegram_user_id,
         count(quiz_attempts.id) as attempt_count,
         coalesce(sum(quiz_attempts.correct_answers), 0) as correct_answers,
         coalesce(sum(quiz_attempts.total_questions), 0) as total_answers,
@@ -206,14 +194,12 @@ async function listEmployeeStudentStats(employeeUserId) {
           1
         ) as avg_percent,
         max(quiz_attempts.finished_at) as last_finished_at
-      from managed_students
-      left join quiz_attempts on quiz_attempts.student_user_id = managed_students.id
-        and quiz_attempts.employee_user_id = $1
+      from all_students
+      left join quiz_attempts on quiz_attempts.student_user_id = all_students.id
         and quiz_attempts.finished_at is not null
-      group by managed_students.id, managed_students.full_name, managed_students.telegram_user_id
-      order by avg_percent asc, attempt_count desc, managed_students.full_name asc
-    `,
-    [employeeUserId],
+      group by all_students.id, all_students.full_name, all_students.telegram_user_id
+      order by avg_percent asc, attempt_count desc, all_students.full_name asc
+    `
   );
 
   return result.rows;
