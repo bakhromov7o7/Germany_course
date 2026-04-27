@@ -1,16 +1,41 @@
 const { query } = require("../db");
 
-async function createTopic({ employeeUserId, title, description }) {
+async function createTopic({ employeeUserId, title, description, status = 'active' }) {
   const result = await query(
     `
       insert into topics (employee_user_id, title, description, status)
-      values ($1, $2, $3, 'active')
+      values ($1, $2, $3, $4)
       returning *
     `,
-    [employeeUserId, title, description || null],
+    [employeeUserId, title, description || null, status],
   );
 
   return result.rows[0];
+}
+
+async function updateTopic(topicId, { title, description, status }) {
+  const result = await query(
+    `
+      update topics
+      set title = coalesce($2, title),
+          description = coalesce($3, description),
+          status = coalesce($4, status),
+          updated_at = now()
+      where id = $1
+      returning *
+    `,
+    [topicId, title, description, status],
+  );
+  return result.rows[0];
+}
+
+async function deleteTopic(topicId) {
+  await query(`delete from knowledge_chunks where topic_id = $1`, [topicId]);
+  await query(`delete from topic_materials where topic_id = $1`, [topicId]);
+  await query(`delete from student_topic_access where topic_id = $1`, [topicId]);
+  await query(`delete from quiz_attempts where topic_id = $1`, [topicId]);
+  await query(`update user_states set active_topic_id = null where active_topic_id = $1`, [topicId]);
+  await query(`delete from topics where id = $1`, [topicId]);
 }
 
 async function listTopicsByEmployee(employeeUserId) {
@@ -129,17 +154,14 @@ async function assignTopicToStudent({ studentUserId, topicId, assignedByUserId }
   return result.rows[0];
 }
 
-async function listTopicsForStudent(studentUserId) {
+async function listTopicsForStudent() {
   const result = await query(
     `
-      select topics.*
-      from student_topic_access
-      join topics on topics.id = student_topic_access.topic_id
-      where student_topic_access.student_user_id = $1
-        and topics.status = 'active'
-      order by topics.id desc
-    `,
-    [studentUserId],
+      select *
+      from topics
+      where status = 'active'
+      order by id desc
+    `
   );
 
   return result.rows;
@@ -149,12 +171,12 @@ async function studentHasTopicAccess(studentUserId, topicId) {
   const result = await query(
     `
       select 1
-      from student_topic_access
-      where student_user_id = $1
-        and topic_id = $2
+      from topics
+      where id = $1
+        and status = 'active'
       limit 1
     `,
-    [studentUserId, topicId],
+    [topicId],
   );
 
   return Boolean(result.rows[0]);
@@ -163,6 +185,8 @@ async function studentHasTopicAccess(studentUserId, topicId) {
 module.exports = {
   assignTopicToStudent,
   createTopic,
+  updateTopic,
+  deleteTopic,
   getTopicById,
   getTopicByIdForEmployee,
   listTopicsByEmployee,

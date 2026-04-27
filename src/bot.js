@@ -1,4 +1,5 @@
 const { config } = require("./config");
+const { query } = require("./db");
 const {
   createManagedUser,
   ensureStudent,
@@ -14,6 +15,8 @@ const {
 const {
   assignTopicToStudent,
   createTopic,
+  updateTopic,
+  deleteTopic,
   getTopicById,
   getTopicByIdForEmployee,
   listTopicsByEmployee,
@@ -80,11 +83,10 @@ const { formatDurationUz, sleep } = require("./utils/time");
 
 const SUPERADMIN_MENU = {
   keyboard: [
-    [{ text: "Employee qo'shish" }],
+    [{ text: "Employee qo'shish" }, { text: "Mavzular" }],
     [{ text: "Lug'atlar" }, { text: "Nemis tilida suhbat" }],
     [{ text: "Natijalar" }, { text: "Kuchsiz studentlar" }],
-    [{ text: "Bekor qilish" }],
-    [{ text: "Yordam" }],
+    [{ text: "Bekor qilish" }, { text: "Yordam" }],
   ],
   resize_keyboard: true,
 };
@@ -95,18 +97,18 @@ function isStaff(role) {
 
 const EMPLOYEE_MENU = {
   keyboard: [
-    [{ text: "Lug'atlar" }, { text: "Nemis tilida suhbat" }],
+    [{ text: "Mavzular" }, { text: "Lug'atlar" }],
+    [{ text: "Nemis tilida suhbat" }],
     [{ text: "Natijalar" }, { text: "Kuchsiz studentlar" }],
-    [{ text: "Bekor qilish" }],
-    [{ text: "Yordam" }],
+    [{ text: "Bekor qilish" }, { text: "Yordam" }],
   ],
   resize_keyboard: true,
 };
 
 const STUDENT_MENU = {
   keyboard: [
-    [{ text: "Lug'atlar" }, { text: "Nemis tilida suhbat" }],
-    [{ text: "Xatolarim" }],
+    [{ text: "Mavzular" }, { text: "Lug'atlar" }],
+    [{ text: "Nemis tilida suhbat" }, { text: "Xatolarim" }],
     [{ text: "Yordam" }],
   ],
   resize_keyboard: true,
@@ -168,20 +170,30 @@ function formatEmployeeTopicList(topics, activeTopicId) {
 }
 
 function buildTopicInlineKeyboard(topics, mode) {
-  if (!topics.length) {
-    return null;
+  const keyboard = [];
+
+  if (mode === "employee") {
+    keyboard.push([{ text: "➕ Yangi mavzu yaratish", callback_data: "employee_new_topic" }]);
   }
 
-  const prefix = mode === "employee" ? "employee_use_topic" : "student_select_topic";
-  const buttonLabel = mode === "employee" ? "Aktiv qilish" : "Tanlash";
+  if (topics.length > 0) {
+    const prefix = mode === "employee" ? "employee_open_topic" : "student_select_topic";
+    const buttonLabel = mode === "employee" ? "⚙️ Boshqarish" : "Tanlash";
 
-  return {
-    inline_keyboard: topics.map((topic) => [
+    keyboard.push(...topics.map((topic) => [
       {
         text: `${buttonLabel}: ${topic.title}`,
         callback_data: `${prefix}:${topic.id}`,
       },
-    ]),
+    ]));
+  }
+
+  if (keyboard.length === 0) {
+    return null;
+  }
+
+  return {
+    inline_keyboard: keyboard,
   };
 }
 
@@ -925,6 +937,63 @@ class UstozBot {
     const topicId = parseId(rawId);
     const extraId = parseId(rawExtra);
 
+    if (action === "employee_new_topic") {
+      await setPendingAction({
+        userId: actor.id,
+        pendingAction: "creating_topic_title",
+      });
+      await answerCallbackQuery(callbackQuery.id);
+      await sendMessage(callbackQuery.message.chat.id, "1/2 Mavzu nomini yuboring:", {
+        reply_markup: getRoleMenu(actor.role),
+      });
+      return;
+    }
+
+    if (action === "employee_open_topic" && topicId) {
+      const topic = await getTopicByIdForEmployee(topicId, actor.id);
+      if (!topic) {
+        await answerCallbackQuery(callbackQuery.id, "Topic topilmadi.");
+        return;
+      }
+
+      await answerCallbackQuery(callbackQuery.id);
+
+      const videos = await getTopicVideos(topic.id);
+      const textMaterials = await query(
+        "select * from topic_materials where topic_id = $1 and material_type in ('text', 'transcript') order by id asc",
+        [topic.id]
+      );
+
+      for (const video of videos) {
+        if (video.telegram_file_id) {
+          await sendVideo(callbackQuery.message.chat.id, video.telegram_file_id, video.title || topic.title);
+        }
+      }
+
+      for (const textItem of textMaterials.rows) {
+        if (textItem.raw_text) {
+          await sendMessage(callbackQuery.message.chat.id, `Matn: ${textItem.title || "Material"}\n\n${textItem.raw_text.substring(0, 4000)}`);
+        }
+      }
+
+      await sendMessage(
+        callbackQuery.message.chat.id,
+        `Mavzu: #${topic.id} - ${topic.title}\nTanlang:`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "✅ Aktiv qilish", callback_data: `employee_use_topic:${topic.id}` }],
+              [
+                { text: "✏️ Tahrirlash", callback_data: `employee_edit_topic:${topic.id}` },
+                { text: "🗑 O'chirish", callback_data: `employee_delete_topic:${topic.id}` }
+              ]
+            ]
+          }
+        }
+      );
+      return;
+    }
+
     if (action === "employee_use_topic" && topicId) {
       const topic = await getTopicByIdForEmployee(topicId, actor.id);
 
@@ -944,9 +1013,104 @@ class UstozBot {
       return;
     }
 
+    if (action === "employee_edit_topic" && topicId) {
+      await answerCallbackQuery(callbackQuery.id, "Tahrirlash");
+      await setPendingAction({
+        userId: actor.id,
+        pendingAction: "editing_topic_title",
+        pendingTopicId: topicId,
+      });
+      await sendMessage(callbackQuery.message.chat.id, "Yangi mavzu nomini yuboring:", {
+        reply_markup: getRoleMenu(actor.role),
+      });
+      return;
+    }
+
+    if (action === "employee_delete_topic" && topicId) {
+      const topic = await getTopicByIdForEmployee(topicId, actor.id);
+      if (!topic) {
+        await answerCallbackQuery(callbackQuery.id, "Topilmadi.");
+        return;
+      }
+      
+      await deleteTopic(topicId);
+      await answerCallbackQuery(callbackQuery.id, "O'chirildi");
+      await deleteMessage(callbackQuery.message.chat.id, callbackQuery.message.message_id);
+      await sendMessage(callbackQuery.message.chat.id, "Mavzu va barcha ma'lumotlari o'chirildi.", {
+        reply_markup: getRoleMenu(actor.role),
+      });
+      return;
+    }
+
+    if (action === "employee_confirm_topic" && topicId) {
+      const topic = await getTopicByIdForEmployee(topicId, actor.id);
+      if (!topic) return;
+
+      if (topic.status === "draft") {
+        await updateTopic(topicId, { status: "active" });
+        await setPendingAction({
+          userId: actor.id,
+          pendingAction: "creating_topic_title",
+          pendingTopicId: topicId,
+        });
+        await answerCallbackQuery(callbackQuery.id, "Mavzu yaratilmoqda.");
+        await deleteMessage(callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        await sendMessage(callbackQuery.message.chat.id, "1/2 Mavzu nomini yuboring:", {
+          reply_markup: getRoleMenu(actor.role),
+        });
+      } else {
+        await clearPendingAction(actor.id);
+        await answerCallbackQuery(callbackQuery.id, "Tasdiqlandi.");
+        await deleteMessage(callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        await sendMessage(callbackQuery.message.chat.id, "Barcha materiallar saqlandi va mavzuga qo'shildi.", {
+          reply_markup: getRoleMenu(actor.role),
+        });
+      }
+      return;
+    }
+
+    if (action === "employee_add_material" && topicId) {
+      await answerCallbackQuery(callbackQuery.id, "Yana material yuborishingiz mumkin.");
+      await deleteMessage(callbackQuery.message.chat.id, callbackQuery.message.message_id);
+      await sendMessage(callbackQuery.message.chat.id, "Davom etishingiz mumkin, yana narsa yuboring.", {
+        reply_markup: getRoleMenu(actor.role),
+      });
+      return;
+    }
+
+    if (action === "employee_cancel_topic" && topicId) {
+      await answerCallbackQuery(callbackQuery.id, "Bekor qilindi.");
+      await deleteTopic(topicId);
+      await deleteMessage(callbackQuery.message.chat.id, callbackQuery.message.message_id);
+      await sendMessage(callbackQuery.message.chat.id, "Mavzu bekor qilindi va o'chirildi.", {
+        reply_markup: getRoleMenu(actor.role),
+      });
+      return;
+    }
+
     if (action === "student_select_topic" && topicId) {
       await answerCallbackQuery(callbackQuery.id, "Mavzu tanlandi.");
       await this.selectTopicForStudent({
+        actor,
+        chatId: callbackQuery.message.chat.id,
+        topicId,
+      });
+      return;
+    }
+
+    if (action === "student_translate_topic" && topicId) {
+      await answerCallbackQuery(callbackQuery.id, "Tarjima tayyorlanmoqda...");
+      await this.handleTopicTranslation({
+        actor,
+        chatId: callbackQuery.message.chat.id,
+        topicId,
+      });
+      return;
+    }
+
+    if (action === "student_qa_topic" && topicId) {
+      await answerCallbackQuery(callbackQuery.id, "Savol-javob rejimi ishga tushdi");
+      await this.handleTopicQA({
         actor,
         chatId: callbackQuery.message.chat.id,
         topicId,
@@ -1582,8 +1746,8 @@ class UstozBot {
       return;
     }
 
-    const topics = await listTopicsForStudent(actor.id);
-    const message = `${formatTopicList(topics, "Sizga hali mavzu biriktirilmagan.")}\n\nTanlash uchun pastdagi tugmani bosing.`;
+    const topics = await listTopicsForStudent();
+    const message = `${formatTopicList(topics, "Hozircha mavzu yo'q.")}\n\nTanlash uchun pastdagi tugmani bosing.`;
     await sendMessage(chatId, message, {
       reply_markup: buildTopicInlineKeyboard(topics, "student") || getRoleMenu(actor.role),
     });
@@ -1661,10 +1825,64 @@ class UstozBot {
       }
     }
 
-    const state = await getUserState(actor.id);
-    await sendMessage(chatId, buildLanguageChoiceText(getPreferredLanguageCode(state)), {
-      reply_markup: buildLanguageInlineKeyboard(),
+    const textMaterials = await query(
+      "select * from topic_materials where topic_id = $1 and material_type in ('text', 'transcript') order by id asc",
+      [topic.id]
+    );
+
+    for (const textItem of textMaterials.rows) {
+      if (textItem.raw_text) {
+        await sendMessage(chatId, `Matn: ${textItem.title || "Material"}\n\n${textItem.raw_text.substring(0, 4000)}`);
+      }
+    }
+
+    await sendMessage(chatId, "Mavzu bo'yicha qanday amal bajaramiz?", {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🇩🇪 Nemis tilida tushuntirish", callback_data: `student_translate_topic:${topic.id}` }],
+          [{ text: "❓ Savol-javob qilish", callback_data: `student_qa_topic:${topic.id}` }]
+        ]
+      }
     });
+  }
+
+  async handleTopicTranslation({ actor, chatId, topicId }) {
+    await sendChatAction(chatId, "typing").catch(() => null);
+    const topic = await getTopicById(topicId);
+    if (!topic) return;
+
+    const chunks = await getKnowledgeChunks(topic.id);
+    const questionText = "Ushbu mavzuni to'liq va tushunarli qilib nemis tilida tushuntirib ber.";
+
+    const answer = await answerTopicQuestion({
+      topic,
+      question: questionText,
+      chunks,
+      languageCode: "de",
+    });
+
+    await sendMessage(chatId, `🇩🇪 Nemis tilida tushuntirish:\n\n${answer}`, {
+      reply_markup: getRoleMenu(actor.role),
+    });
+  }
+
+  async handleTopicQA({ actor, chatId, topicId }) {
+    const topic = await getTopicById(topicId);
+    if (!topic) return;
+
+    await upsertStudentSession({
+      studentUserId: actor.id,
+      topicId: topic.id,
+      state: "asking",
+    });
+
+    await sendMessage(
+      chatId,
+      "Savol-javob rejimi boshlandi. Menga mavzu bo'yicha savollaringizni berishingiz mumkin yoki men sizdan so'rashimni xohlasangiz 'menga savol bering' deb yozing.",
+      {
+        reply_markup: getRoleMenu(actor.role),
+      }
+    );
   }
 
   async handleVideoMessage({ actor, chatId, message }) {
@@ -1676,13 +1894,13 @@ class UstozBot {
     const state = await getUserState(actor.id);
     let topicId = null;
     let title = null;
+    let isNewDraft = false;
 
     if (state?.pending_action === "awaiting_video" && state.pending_topic_id) {
       topicId = state.pending_topic_id;
       title = state.pending_title || null;
     } else if (state?.active_topic_id) {
       const activeTopic = await getTopicByIdForEmployee(state.active_topic_id, actor.id);
-
       if (activeTopic) {
         topicId = activeTopic.id;
         title = message.caption || `Video ${new Date().toISOString()}`;
@@ -1690,8 +1908,15 @@ class UstozBot {
     }
 
     if (!topicId) {
-      await sendMessage(chatId, "Avval /newtopic oching yoki /use <topic_id> bilan mavzuni aktiv qiling.");
-      return;
+      const draftTopic = await createTopic({
+        employeeUserId: actor.id,
+        title: message.caption || "Mavzu (avtomatik)",
+        status: "draft"
+      });
+      topicId = draftTopic.id;
+      title = message.caption || "Video";
+      await setActiveTopic(actor.id, topicId);
+      isNewDraft = true;
     }
 
     const video = getIncomingVideo(message);
@@ -1718,20 +1943,18 @@ class UstozBot {
       }
     }
 
-    const transcriptStatus = await this.tryAutoTranscribeVideo({
-      actor,
-      chatId,
-      topicId,
-      title,
-      video,
-    });
-
     await sendMessage(
       chatId,
-      transcriptStatus,
+      `Material saqlandi. Yana qo'shimcha qo'shasizmi?`,
       {
-        reply_markup: getRoleMenu(actor.role),
-      },
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "✅ Tasdiqlash", callback_data: `employee_confirm_topic:${topicId}` }],
+            [{ text: "➕ Qo'shish", callback_data: `employee_add_material:${topicId}` }],
+            [{ text: "❌ Bekor qilish", callback_data: `employee_cancel_topic:${topicId}` }]
+          ]
+        }
+      }
     );
   }
 
@@ -1793,7 +2016,7 @@ class UstozBot {
 
     const menuButtons = [
       "bekor qilish", "yordam", "lug'atlar", "lugatlar", 
-      "employee qo'shish", "natijalar", "kuchsiz studentlar", "xatolarim"
+      "employee qo'shish", "natijalar", "kuchsiz studentlar", "xatolarim", "mavzular"
     ];
 
     if (menuButtons.includes(normalizedText)) {
@@ -2930,6 +3153,11 @@ class UstozBot {
       return;
     }
 
+    if (normalizedText === "mavzular") {
+      await this.handleListEmployeeTopics({ actor, chatId });
+      return;
+    }
+
     if (normalizedText === "natijalar") {
       await this.showEmployeeResults({ actor, chatId });
       return;
@@ -2940,11 +3168,20 @@ class UstozBot {
       return;
     }
 
-    if (state?.pending_action === "creating_topic_title") {
+    if (state?.pending_action === "creating_topic_title" || state?.pending_action === "editing_topic_title") {
+      const pendingTitle = message.text.trim();
+      if (pendingTitle.length > 200) {
+        await sendMessage(chatId, "Mavzu nomi juda uzun! Iltimos, qisqaroq nom kiriting (masalan, 1-2 so'z).", {
+          reply_markup: getRoleMenu(actor.role),
+        });
+        return;
+      }
+
       await setPendingAction({
         userId: actor.id,
         pendingAction: "creating_topic_description",
-        pendingTitle: message.text.trim(),
+        pendingTopicId: state.pending_topic_id,
+        pendingTitle: pendingTitle,
       });
       await sendMessage(chatId, "2/2 Izoh yuboring. Kerak bo'lmasa `-` deb yozing.", {
         reply_markup: getRoleMenu(actor.role),
@@ -2954,17 +3191,26 @@ class UstozBot {
 
     if (state?.pending_action === "creating_topic_description") {
       const description = text === "-" ? null : message.text.trim();
-      const topic = await createTopic({
-        employeeUserId: actor.id,
-        title: state.pending_title,
-        description,
-      });
+      let topic;
+
+      if (state.pending_topic_id) {
+        topic = await updateTopic(state.pending_topic_id, {
+          title: state.pending_title,
+          description,
+        });
+      } else {
+        topic = await createTopic({
+          employeeUserId: actor.id,
+          title: state.pending_title,
+          description,
+        });
+      }
 
       await clearPendingAction(actor.id);
       await setActiveTopic(actor.id, topic.id);
       await sendMessage(
         chatId,
-        `Mavzu yaratildi va aktiv qilindi: #${topic.id} - ${topic.title}\nEndi text yoki video'ni oddiy yuboravering.`,
+        `Mavzu saqlandi va aktiv qilindi: #${topic.id} - ${topic.title}\nEndi text yoki video'ni oddiy yuboravering.`,
         {
           reply_markup: getRoleMenu(actor.role),
         },
@@ -3115,14 +3361,14 @@ class UstozBot {
     }
 
     if (!topicId) {
-      await sendMessage(
-        chatId,
-        "Avval mavzu yarating yoki tanlang.\nTugmalar: `Mavzu yaratish` yoki `Mavzularim`",
-        {
-          reply_markup: getRoleMenu(actor.role),
-        },
-      );
-      return;
+      const draftTopic = await createTopic({
+        employeeUserId: actor.id,
+        title: "Mavzu (avtomatik)",
+        status: "draft"
+      });
+      topicId = draftTopic.id;
+      title = "Text";
+      await setActiveTopic(actor.id, topicId);
     }
 
     const chunks = chunkText(text);
@@ -3142,12 +3388,19 @@ class UstozBot {
         await setActiveTopic(actor.id, state.active_topic_id);
       }
     }
+
     await sendMessage(
       chatId,
-      `Text material saqlandi. ${chunks.length} ta knowledge chunk yaratildi.`,
+      `Material saqlandi. Yana qo'shimcha qo'shasizmi?`,
       {
-        reply_markup: getRoleMenu(actor.role),
-      },
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "✅ Tasdiqlash", callback_data: `employee_confirm_topic:${topicId}` }],
+            [{ text: "➕ Qo'shish", callback_data: `employee_add_material:${topicId}` }],
+            [{ text: "❌ Bekor qilish", callback_data: `employee_cancel_topic:${topicId}` }]
+          ]
+        }
+      }
     );
   }
 
@@ -3167,6 +3420,11 @@ class UstozBot {
 
     if (normalizedText === "lug'atlar" || normalizedText === "lugatlar") {
       await this.showStudentDictionaries({ actor, chatId });
+      return;
+    }
+
+    if (normalizedText === "mavzular") {
+      await this.handleListStudentTopics({ actor, chatId });
       return;
     }
 
