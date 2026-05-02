@@ -232,11 +232,35 @@ async function listStudentMistakes({ studentUserId, topicId = null, limit = 5 })
   return result.rows;
 }
 
+async function getAttemptSummaryByQuestionId(questionId) {
+  const questionResult = await query("select * from quiz_questions where id = $1 limit 1", [questionId]);
+  const question = questionResult.rows[0];
+  
+  if (!question) return null;
+  
+  const attemptResult = await query(
+    `
+      select quiz_attempts.*, topics.title as topic_title
+      from quiz_attempts
+      join topics on topics.id = quiz_attempts.topic_id
+      where quiz_attempts.id = $1
+      limit 1
+    `,
+    [question.quiz_attempt_id]
+  );
+  
+  return {
+    question,
+    attempt: attemptResult.rows[0]
+  };
+}
+
 module.exports = {
   createQuizAttempt,
   finalizeAttempt,
   getAttemptById,
   getAttemptSummary,
+  getAttemptSummaryByQuestionId,
   getNextUnansweredQuestion,
   listEmployeeStudentStats,
   listRecentQuizResultsForEmployee,
