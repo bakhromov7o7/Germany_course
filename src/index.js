@@ -1,18 +1,17 @@
 const { healthcheck, closePool } = require("./db");
-const { UstozBot } = require("./bot");
 const { startServer } = require("./api");
+const { bootstrapDatabase } = require("./scripts/seed");
+const { hasOpenAi } = require("./services/openai-service");
 
 async function main() {
-  console.log("Initializing Germanybot system...");
-  
+  console.log("Initializing Ustoz AI Backend API...");
+
   await healthcheck();
-  
-  // Start API Server
+  await bootstrapDatabase();
+
+  console.log(`OpenAI/Groq AI configured: ${hasOpenAi() ? "yes" : "no"}`);
+
   await startServer();
-  
-  // Start Telegram Bot
-  const bot = new UstozBot();
-  await bot.start();
 }
 
 main().catch(async (error) => {

@@ -1,9 +1,16 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { telegramLogin, getMe } = require('../controllers/auth');
-const { protect } = require('../middlewares/auth');
+const {
+  login,
+  register,
+  getMe,
+  updateProfile,
+} = require("../controllers/auth");
+const { protect } = require("../middlewares/auth");
 
-router.post('/telegram', telegramLogin);
-router.get('/me', protect, getMe);
+router.post("/login", login);
+router.post("/register", register);
+router.get("/me", protect, getMe);
+router.patch("/profile", protect, updateProfile);
 
 module.exports = router;

@@ -42,15 +42,34 @@ end $$;
 
 create table if not exists users (
   id bigserial primary key,
-  telegram_user_id bigint not null unique,
+  telegram_user_id bigint unique,
   full_name varchar(255) not null,
   username varchar(255),
+  phone varchar(50),
+  password_hash text,
   role user_role not null,
-  created_by_user_id bigint references users(id),
+  created_by_user_id bigint references users(id) on delete set null,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table if exists users
+  alter column telegram_user_id drop not null;
+
+alter table if exists users
+  add column if not exists phone varchar(50);
+
+alter table if exists users
+  add column if not exists password_hash text;
+
+create unique index if not exists idx_users_username_unique
+  on users (lower(username))
+  where username is not null;
+
+create unique index if not exists idx_users_phone_unique
+  on users (phone)
+  where phone is not null;
 
 create table if not exists topics (
   id bigserial primary key,

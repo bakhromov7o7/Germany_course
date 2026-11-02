@@ -1,13 +1,20 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { getUsers, getUser, manageEmployee } = require('../controllers/users');
-const { protect, authorize } = require('../middlewares/auth');
+const {
+  getUsers,
+  getUser,
+  createUser,
+  updateUser,
+  deleteUser,
+} = require("../controllers/users");
+const { protect, authorize } = require("../middlewares/auth");
 
 router.use(protect);
-router.use(authorize('employee', 'superadmin'));
+router.use(authorize("employee", "superadmin"));
 
-router.get('/', getUsers);
-router.get('/:id', getUser);
-router.post('/employee', authorize('superadmin'), manageEmployee);
+router.route("/").get(getUsers).post(createUser);
+router.post("/employee", createUser);
+
+router.route("/:id").get(getUser).patch(updateUser).delete(deleteUser);
 
 module.exports = router;

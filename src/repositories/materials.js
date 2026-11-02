@@ -77,6 +77,45 @@ async function saveTextMaterial({
   });
 }
 
+async function getTopicMaterials(topicId) {
+  const result = await query(
+    `
+      select *
+      from topic_materials
+      where topic_id = $1
+      order by id asc
+    `,
+    [topicId],
+  );
+
+  return result.rows;
+}
+
+async function deleteMaterial(materialId, topicId) {
+  return withTransaction(async (client) => {
+    await client.query(
+      `
+        delete from knowledge_chunks
+        where material_id = $1
+          and topic_id = $2
+      `,
+      [materialId, topicId],
+    );
+
+    const result = await client.query(
+      `
+        delete from topic_materials
+        where id = $1
+          and topic_id = $2
+        returning *
+      `,
+      [materialId, topicId],
+    );
+
+    return result.rows[0] || null;
+  });
+}
+
 async function getTopicVideos(topicId) {
   const result = await query(
     `
@@ -107,7 +146,9 @@ async function getKnowledgeChunks(topicId) {
 }
 
 module.exports = {
+  deleteMaterial,
   getKnowledgeChunks,
+  getTopicMaterials,
   getTopicVideos,
   saveTextMaterial,
   saveVideoMaterial,

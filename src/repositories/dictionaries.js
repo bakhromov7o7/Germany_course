@@ -104,7 +104,7 @@ async function createDictionary({ employeeUserId, title, entries }) {
   });
 }
 
-async function listDictionariesByEmployee(employeeUserId) {
+async function listDictionariesByEmployee(_employeeUserId) {
   const result = await query(
     `
       select
@@ -116,35 +116,30 @@ async function listDictionariesByEmployee(employeeUserId) {
         from dictionary_entries
         group by dictionary_id
       ) as entry_stats on entry_stats.dictionary_id = dictionaries.id
-      where dictionaries.employee_user_id = $1
       order by dictionaries.updated_at desc, dictionaries.id desc
     `,
-    [employeeUserId],
+    [],
   );
 
   return result.rows.map(mapDictionaryRow);
 }
 
-async function getDictionaryByIdForEmployee(dictionaryId, employeeUserId) {
+async function getDictionaryByIdForEmployee(dictionaryId, _employeeUserId) {
+  return getDictionaryById(dictionaryId);
+}
+
+async function updateDictionaryTitle(dictionaryId, title) {
   const result = await query(
     `
-      select
-        dictionaries.*,
-        coalesce(entry_stats.entry_count, 0) as entry_count
-      from dictionaries
-      left join (
-        select dictionary_id, count(*) as entry_count
-        from dictionary_entries
-        group by dictionary_id
-      ) as entry_stats on entry_stats.dictionary_id = dictionaries.id
-      where dictionaries.id = $1
-        and dictionaries.employee_user_id = $2
-      limit 1
+      update dictionaries
+      set title = $2,
+          updated_at = now()
+      where id = $1
+      returning *
     `,
-    [dictionaryId, employeeUserId],
+    [dictionaryId, title],
   );
-
-  return mapDictionaryRow(result.rows[0] || null);
+  return result.rows[0] || null;
 }
 
 async function addDictionaryEntries({ dictionaryId, entries }) {
@@ -424,5 +419,6 @@ module.exports = {
   listDictionariesForStudent,
   listDictionaryEntries,
   replaceDictionaryEntries,
+  updateDictionaryTitle,
   upsertDictionarySession,
 };

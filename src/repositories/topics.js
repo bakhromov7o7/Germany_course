@@ -1,6 +1,6 @@
 const { query } = require("../db");
 
-async function createTopic({ employeeUserId, title, description, status = 'active' }) {
+async function createTopic({ employeeUserId, title, description, status = "active" }) {
   const result = await query(
     `
       insert into topics (employee_user_id, title, description, status)
@@ -26,46 +26,47 @@ async function updateTopic(topicId, { title, description, status }) {
     `,
     [topicId, title, description, status],
   );
-  return result.rows[0];
+  return result.rows[0] || null;
 }
 
 async function deleteTopic(topicId) {
-  await query(`delete from knowledge_chunks where topic_id = $1`, [topicId]);
-  await query(`delete from topic_materials where topic_id = $1`, [topicId]);
-  await query(`delete from student_topic_access where topic_id = $1`, [topicId]);
-  await query(`delete from quiz_attempts where topic_id = $1`, [topicId]);
-  await query(`update user_states set active_topic_id = null where active_topic_id = $1`, [topicId]);
-  await query(`delete from topics where id = $1`, [topicId]);
+  await query("delete from knowledge_chunks where topic_id = $1", [topicId]);
+  await query("delete from topic_materials where topic_id = $1", [topicId]);
+  await query("delete from student_topic_access where topic_id = $1", [topicId]);
+  await query("delete from quiz_attempts where topic_id = $1", [topicId]);
+  await query("update user_states set active_topic_id = null where active_topic_id = $1", [topicId]);
+  await query("update student_sessions set topic_id = null where topic_id = $1", [topicId]);
+  await query("delete from topics where id = $1", [topicId]);
 }
 
-async function listTopicsByEmployee(employeeUserId) {
+async function listTopicsByEmployee(_employeeUserId) {
   const result = await query(
     `
       select *
       from topics
-      where employee_user_id = $1
       order by id desc
     `,
-    [employeeUserId],
   );
 
   return result.rows;
 }
 
-async function listTopicsByEmployeeWithStats(employeeUserId) {
+async function listTopicsByEmployeeWithStats(_employeeUserId) {
   const result = await query(
     `
       select
         topics.*,
-        coalesce(material_stats.material_count, 0) as material_count,
-        coalesce(material_stats.video_count, 0) as video_count,
-        coalesce(material_stats.text_count, 0) as text_count,
-        coalesce(material_stats.transcript_count, 0) as transcript_count,
-        coalesce(chunk_stats.chunk_count, 0) as chunk_count,
-        coalesce(student_stats.student_count, 0) as student_count,
-        coalesce(quiz_stats.quiz_count, 0) as quiz_count,
-        coalesce(quiz_stats.avg_percent, 0) as avg_percent
+        users.full_name as creator_name,
+        coalesce(material_stats.material_count, 0)::int as material_count,
+        coalesce(material_stats.video_count, 0)::int as video_count,
+        coalesce(material_stats.text_count, 0)::int as text_count,
+        coalesce(material_stats.transcript_count, 0)::int as transcript_count,
+        coalesce(chunk_stats.chunk_count, 0)::int as chunk_count,
+        coalesce(student_stats.student_count, 0)::int as student_count,
+        coalesce(quiz_stats.quiz_count, 0)::int as quiz_count,
+        coalesce(quiz_stats.avg_percent, 0)::float as avg_percent
       from topics
+      left join users on users.id = topics.employee_user_id
       left join (
         select
           topic_id,
@@ -99,10 +100,8 @@ async function listTopicsByEmployeeWithStats(employeeUserId) {
         where finished_at is not null
         group by topic_id
       ) as quiz_stats on quiz_stats.topic_id = topics.id
-      where topics.employee_user_id = $1
       order by topics.id desc
     `,
-    [employeeUserId],
   );
 
   return result.rows;
@@ -111,9 +110,12 @@ async function listTopicsByEmployeeWithStats(employeeUserId) {
 async function getTopicById(topicId) {
   const result = await query(
     `
-      select *
+      select
+        topics.*,
+        users.full_name as creator_name
       from topics
-      where id = $1
+      left join users on users.id = topics.employee_user_id
+      where topics.id = $1
       limit 1
     `,
     [topicId],
@@ -122,19 +124,8 @@ async function getTopicById(topicId) {
   return result.rows[0] || null;
 }
 
-async function getTopicByIdForEmployee(topicId, employeeUserId) {
-  const result = await query(
-    `
-      select *
-      from topics
-      where id = $1
-        and employee_user_id = $2
-      limit 1
-    `,
-    [topicId, employeeUserId],
-  );
-
-  return result.rows[0] || null;
+async function getTopicByIdForEmployee(topicId, _employeeUserId) {
+  return getTopicById(topicId);
 }
 
 async function assignTopicToStudent({ studentUserId, topicId, assignedByUserId }) {
@@ -157,17 +148,30 @@ async function assignTopicToStudent({ studentUserId, topicId, assignedByUserId }
 async function listTopicsForStudent() {
   const result = await query(
     `
-      select *
+      select
+        topics.*,
+        coalesce(material_stats.material_count, 0)::int as material_count,
+        coalesce(chunk_stats.chunk_count, 0)::int as chunk_count
       from topics
-      where status = 'active'
-      order by id desc
-    `
+      left join (
+        select topic_id, count(*) as material_count
+        from topic_materials
+        group by topic_id
+      ) as material_stats on material_stats.topic_id = topics.id
+      left join (
+        select topic_id, count(*) as chunk_count
+        from knowledge_chunks
+        group by topic_id
+      ) as chunk_stats on chunk_stats.topic_id = topics.id
+      where topics.status = 'active'
+      order by topics.id desc
+    `,
   );
 
   return result.rows;
 }
 
-async function studentHasTopicAccess(studentUserId, topicId) {
+async function studentHasTopicAccess(_studentUserId, topicId) {
   const result = await query(
     `
       select 1

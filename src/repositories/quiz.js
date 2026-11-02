@@ -174,7 +174,7 @@ async function listEmployeeStudentStats(_employeeUserId) {
   const result = await query(
     `
       with all_students as (
-        select users.id, users.full_name, users.telegram_user_id
+        select users.id, users.full_name, users.username, users.phone, users.telegram_user_id
         from users
         where users.role = 'student'
           and users.is_active = true
@@ -182,24 +182,46 @@ async function listEmployeeStudentStats(_employeeUserId) {
       select
         all_students.id,
         all_students.full_name,
+        all_students.username,
+        all_students.phone,
         all_students.telegram_user_id,
-        count(quiz_attempts.id) as attempt_count,
-        coalesce(sum(quiz_attempts.correct_answers), 0) as correct_answers,
-        coalesce(sum(quiz_attempts.total_questions), 0) as total_answers,
+        count(quiz_attempts.id)::int as attempt_count,
+        coalesce(sum(quiz_attempts.correct_answers), 0)::int as correct_answers,
+        coalesce(sum(quiz_attempts.total_questions), 0)::int as total_answers,
         round(
           case
             when coalesce(sum(quiz_attempts.total_questions), 0) = 0 then 0
             else (coalesce(sum(quiz_attempts.correct_answers), 0)::numeric / sum(quiz_attempts.total_questions)) * 100
           end,
           1
-        ) as avg_percent,
+        )::float as avg_percent,
         max(quiz_attempts.finished_at) as last_finished_at
       from all_students
       left join quiz_attempts on quiz_attempts.student_user_id = all_students.id
         and quiz_attempts.finished_at is not null
-      group by all_students.id, all_students.full_name, all_students.telegram_user_id
+      group by all_students.id, all_students.full_name, all_students.username, all_students.phone, all_students.telegram_user_id
       order by avg_percent asc, attempt_count desc, all_students.full_name asc
     `
+  );
+
+  return result.rows;
+}
+
+async function listStudentAttempts(studentUserId, limit = 20) {
+  const result = await query(
+    `
+      select
+        quiz_attempts.*,
+        topics.title as topic_title,
+        round((quiz_attempts.correct_answers::numeric / nullif(quiz_attempts.total_questions, 0)) * 100, 1)::float as percent
+      from quiz_attempts
+      join topics on topics.id = quiz_attempts.topic_id
+      where quiz_attempts.student_user_id = $1
+        and quiz_attempts.finished_at is not null
+      order by quiz_attempts.finished_at desc, quiz_attempts.id desc
+      limit $2
+    `,
+    [studentUserId, limit],
   );
 
   return result.rows;
@@ -255,6 +277,35 @@ async function getAttemptSummaryByQuestionId(questionId) {
   };
 }
 
+async function listRecentMistakesForStaff(limit = 15) {
+  const result = await query(
+    `
+      select
+        quiz_questions.id,
+        quiz_questions.question_text,
+        quiz_questions.expected_answer,
+        quiz_questions.student_answer,
+        quiz_questions.feedback_text,
+        quiz_attempts.id as attempt_id,
+        quiz_attempts.topic_id,
+        quiz_attempts.student_user_id,
+        students.full_name as student_full_name,
+        topics.title as topic_title,
+        quiz_attempts.finished_at
+      from quiz_questions
+      join quiz_attempts on quiz_attempts.id = quiz_questions.quiz_attempt_id
+      join users as students on students.id = quiz_attempts.student_user_id
+      join topics on topics.id = quiz_attempts.topic_id
+      where quiz_questions.is_correct = false
+      order by quiz_attempts.finished_at desc nulls last, quiz_questions.id desc
+      limit $1
+    `,
+    [limit],
+  );
+
+  return result.rows;
+}
+
 module.exports = {
   createQuizAttempt,
   finalizeAttempt,
@@ -263,7 +314,9 @@ module.exports = {
   getAttemptSummaryByQuestionId,
   getNextUnansweredQuestion,
   listEmployeeStudentStats,
+  listRecentMistakesForStaff,
   listRecentQuizResultsForEmployee,
+  listStudentAttempts,
   listStudentMistakes,
   markReportSent,
   saveQuestionAnswer,

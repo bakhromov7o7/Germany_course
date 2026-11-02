@@ -1,23 +1,28 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { 
-  getDictionaries, 
-  createDictionary, 
-  getDictionary, 
-  updateEntries, 
-  deleteDictionary 
-} = require('../controllers/dictionaries');
-const { protect, authorize } = require('../middlewares/auth');
+const {
+  getDictionaries,
+  createDictionary,
+  getDictionary,
+  updateEntries,
+  deleteDictionary,
+  checkAnswer,
+} = require("../controllers/dictionaries");
+const { protect, authorize } = require("../middlewares/auth");
 
 router.use(protect);
 
-router.route('/')
+router
+  .route("/")
   .get(getDictionaries)
-  .post(authorize('employee', 'superadmin'), createDictionary);
+  .post(authorize("employee", "superadmin"), createDictionary);
 
-router.route('/:id')
+router
+  .route("/:id")
   .get(getDictionary)
-  .patch(authorize('employee', 'superadmin'), updateEntries)
-  .delete(authorize('employee', 'superadmin'), deleteDictionary);
+  .patch(authorize("employee", "superadmin"), updateEntries)
+  .delete(authorize("employee", "superadmin"), deleteDictionary);
+
+router.post("/:id/check-answer", checkAnswer);
 
 module.exports = router;
