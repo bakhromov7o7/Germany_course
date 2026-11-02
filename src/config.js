@@ -30,6 +30,12 @@ function getOptionalNumber(name, fallback) {
 }
 
 const config = {
+  telegramBotToken: getOptionalString("TELEGRAM_BOT_TOKEN"),
+  telegramApiBase: getOptionalString("TELEGRAM_API_BASE", "https://api.telegram.org"),
+  telegramPollTimeoutSeconds: getOptionalNumber("TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
+  telegramDownloadLimitBytes: getOptionalNumber("TELEGRAM_DOWNLOAD_LIMIT_BYTES", 20 * 1024 * 1024),
+  superadminTelegramId: getOptionalNumber("SUPERADMIN_TELEGRAM_ID", 0),
+  pollRetryDelayMs: getOptionalNumber("POLL_RETRY_DELAY_MS", 4000),
   databaseUrl: getRequiredString("DATABASE_URL"),
   jwtSecret: getOptionalString("JWT_SECRET", "super-secret-key-123"),
   port: getOptionalNumber("PORT", 3000),

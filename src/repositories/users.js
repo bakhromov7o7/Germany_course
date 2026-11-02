@@ -7,6 +7,40 @@ function sanitizeUser(row) {
   return rest;
 }
 
+function normalizeUsername(username) {
+  const cleaned = String(username || "").trim().replace(/^@+/, "");
+  return cleaned ? cleaned : null;
+}
+
+async function resolveSafeUsername(username, telegramUserId = null, userId = null) {
+  const clean = normalizeUsername(username);
+  if (!clean) return null;
+
+  const conflict = await query(
+    `
+      select id, telegram_user_id
+      from users
+      where lower(username) = lower($1)
+      limit 1
+    `,
+    [clean],
+  );
+
+  if (!conflict.rows[0]) {
+    return clean;
+  }
+
+  const row = conflict.rows[0];
+  if (
+    (telegramUserId && String(row.telegram_user_id) === String(telegramUserId)) ||
+    (userId && String(row.id) === String(userId))
+  ) {
+    return clean;
+  }
+
+  return null;
+}
+
 async function findById(userId) {
   const result = await query("select * from users where id = $1 limit 1", [userId]);
   return sanitizeUser(result.rows[0] || null);
@@ -15,6 +49,137 @@ async function findById(userId) {
 async function findByIdWithPassword(userId) {
   const result = await query("select * from users where id = $1 limit 1", [userId]);
   return result.rows[0] || null;
+}
+
+async function findByTelegramUserId(telegramUserId) {
+  if (!telegramUserId) return null;
+  const result = await query("select * from users where telegram_user_id = $1 limit 1", [telegramUserId]);
+  return sanitizeUser(result.rows[0] || null);
+}
+
+async function findAnySuperadmin() {
+  const result = await query(
+    "select * from users where role = 'superadmin' and telegram_user_id is not null order by id asc limit 1",
+  );
+  return sanitizeUser(result.rows[0] || null);
+}
+
+async function ensureSuperadmin({ telegramUserId, fullName, username }) {
+  const safeUsername = await resolveSafeUsername(username, telegramUserId);
+  const result = await query(
+    `
+      insert into users (
+        telegram_user_id,
+        full_name,
+        username,
+        role,
+        is_active
+      )
+      values ($1, $2, $3, 'superadmin', true)
+      on conflict (telegram_user_id)
+      do update set
+        full_name = excluded.full_name,
+        username = coalesce(excluded.username, users.username),
+        role = 'superadmin',
+        is_active = true,
+        updated_at = now()
+      returning *
+    `,
+    [telegramUserId, String(fullName || "Superadmin").trim(), safeUsername],
+  );
+
+  return sanitizeUser(result.rows[0]);
+}
+
+async function touchKnownUser({ telegramUserId, fullName, username }) {
+  const safeUsername = await resolveSafeUsername(username, telegramUserId);
+  const result = await query(
+    `
+      update users
+      set
+        full_name = coalesce(nullif($2, ''), full_name),
+        username = coalesce($3, username),
+        updated_at = now()
+      where telegram_user_id = $1
+      returning *
+    `,
+    [telegramUserId, String(fullName || "").trim(), safeUsername],
+  );
+
+  return sanitizeUser(result.rows[0] || null);
+}
+
+async function createManagedUser({ telegramUserId, fullName, username, role, createdByUserId }) {
+  const safeUsername = await resolveSafeUsername(username, telegramUserId);
+  const result = await query(
+    `
+      insert into users (
+        telegram_user_id,
+        full_name,
+        username,
+        role,
+        created_by_user_id,
+        is_active
+      )
+      values ($1, $2, $3, $4::user_role, $5, true)
+      on conflict (telegram_user_id)
+      do update set
+        full_name = excluded.full_name,
+        username = coalesce(excluded.username, users.username),
+        role = case
+          when users.role = 'superadmin' then users.role
+          else excluded.role
+        end,
+        created_by_user_id = coalesce(users.created_by_user_id, excluded.created_by_user_id),
+        is_active = true,
+        updated_at = now()
+      returning *
+    `,
+    [telegramUserId, String(fullName || "Foydalanuvchi").trim(), safeUsername, role, createdByUserId || null],
+  );
+
+  return sanitizeUser(result.rows[0]);
+}
+
+async function ensureStudent({ telegramUserId, fullName, username }) {
+  const safeUsername = await resolveSafeUsername(username, telegramUserId);
+  const result = await query(
+    `
+      insert into users (
+        telegram_user_id,
+        full_name,
+        username,
+        role,
+        is_active
+      )
+      values ($1, $2, $3, 'student', true)
+      on conflict (telegram_user_id)
+      do update set
+        full_name = excluded.full_name,
+        username = coalesce(excluded.username, users.username),
+        is_active = true,
+        updated_at = now()
+      returning *
+    `,
+    [telegramUserId, String(fullName || "Student").trim(), safeUsername],
+  );
+
+  return sanitizeUser(result.rows[0]);
+}
+
+async function listManagedUsersByRole({ role = "student" } = {}) {
+  const result = await query(
+    `
+      select *
+      from users
+      where role = $1::user_role
+        and is_active = true
+      order by full_name asc, id asc
+    `,
+    [role],
+  );
+
+  return result.rows.map(sanitizeUser);
 }
 
 async function findByLogin(login) {
@@ -42,7 +207,7 @@ async function createUser({
   role = "student",
   createdByUserId = null,
 }) {
-  const cleanUsername = username ? String(username).trim().toLowerCase() : null;
+  const cleanUsername = normalizeUsername(username)?.toLowerCase() || null;
   const cleanPhone = phone ? String(phone).trim() : null;
   const passwordHash = password ? hashPassword(password) : null;
 
@@ -85,7 +250,7 @@ async function updateUser(
   const nextUsername =
     username !== undefined
       ? username
-        ? String(username).trim().toLowerCase()
+        ? normalizeUsername(username)?.toLowerCase() || null
         : null
       : existing.username;
   const nextPhone =
@@ -173,7 +338,7 @@ async function listUsers({ role = null } = {}) {
 async function listAccessibleStudentsForEmployee() {
   const result = await query(
     `
-      select id, full_name, username, phone, role, is_active, created_at
+      select id, full_name, username, phone, telegram_user_id, role, is_active, created_at
       from users
       where role = 'student'
         and is_active = true
@@ -244,15 +409,22 @@ async function ensureDefaultUsers() {
 }
 
 module.exports = {
+  createManagedUser,
   createUser,
   deleteUser,
   ensureDefaultUsers,
+  ensureStudent,
+  ensureSuperadmin,
+  findAnySuperadmin,
   findById,
   findByIdWithPassword,
   findByLogin,
+  findByTelegramUserId,
   listAccessibleStudentsForEmployee,
+  listManagedUsersByRole,
   listStaffMembers,
   listUsers,
   sanitizeUser,
+  touchKnownUser,
   updateUser,
 };

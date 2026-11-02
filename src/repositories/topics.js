@@ -30,12 +30,21 @@ async function updateTopic(topicId, { title, description, status }) {
 }
 
 async function deleteTopic(topicId) {
+  await query("update user_states set active_topic_id = null where active_topic_id = $1", [topicId]);
+  await query("update user_states set pending_topic_id = null where pending_topic_id = $1", [topicId]);
+  await query(
+    "update student_sessions set active_quiz_attempt_id = null where active_quiz_attempt_id in (select id from quiz_attempts where topic_id = $1)",
+    [topicId],
+  );
+  await query("delete from student_sessions where topic_id = $1", [topicId]);
+  await query(
+    "delete from quiz_questions where quiz_attempt_id in (select id from quiz_attempts where topic_id = $1)",
+    [topicId],
+  );
+  await query("delete from quiz_attempts where topic_id = $1", [topicId]);
   await query("delete from knowledge_chunks where topic_id = $1", [topicId]);
   await query("delete from topic_materials where topic_id = $1", [topicId]);
   await query("delete from student_topic_access where topic_id = $1", [topicId]);
-  await query("delete from quiz_attempts where topic_id = $1", [topicId]);
-  await query("update user_states set active_topic_id = null where active_topic_id = $1", [topicId]);
-  await query("update student_sessions set topic_id = null where topic_id = $1", [topicId]);
   await query("delete from topics where id = $1", [topicId]);
 }
 

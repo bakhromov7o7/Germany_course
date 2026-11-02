@@ -15,7 +15,8 @@ async function bootstrapDatabase() {
   const { teacher } = await ensureDefaultUsers();
 
   const existingTopics = await listTopicsByEmployee(teacher.id);
-  if (existingTopics.length === 0) {
+  const hasA11 = existingTopics.some((t) => t.title && t.title.includes("Begrüßung"));
+  if (!hasA11) {
     const topic1 = await createTopic({
       employeeUserId: teacher.id,
       title: "A1.1 — Salomlashish va Tanishuv (Begrüßung)",
